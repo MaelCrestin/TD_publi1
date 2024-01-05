@@ -1,0 +1,186 @@
+---
+title: "R Notebook"
+output: github_document
+---
+
+Pour des questions pratiques, nous avons pris que 40 séquences (20 seq F et 20 seq R) importés à partir de la publication : Biodiversity, environmental drivers, and sustainability of the global deep-sea sponge microbiome (https://doi.org/10.1038/s41467-022-32684-4 ; ENA : PRJNA664762)
+
+
+Pour charger nos données (nos séquences), on les upload dans nos files, puis dans le temrinal on utilise "wget -i nom_du_fichier.txt".  
+
+Pour plus de commentaire (voir le tutoriel dada2) : https://benjjneb.github.io/dada2/tutorial.html
+Chargement du package dada2. 
+```{r}
+library(dada2); packageVersion("dada2")
+```
+
+Permet de définir la variable de chemin afin qu'elle pointe vers le répertoire extrait sur la machine. 
+```{r}
+path=here::here("Sequence")
+list.files(path)
+```
+Permet de lire les noms des fichiers "_1.fastq.gz" et de créer des liestes correpondantes à des fichiers fastq directs et inverses. 
+```{r}
+# Forward and reverse fastq filenames have format "_1.fastq.gz" et "_2.fastq.gz"
+
+fnFs <- sort(list.files(path, pattern="_1.fastq.gz", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_2.fastq.gz", full.names = TRUE))
+
+## Extract sample names, assuming filenames have format: .fastq
+sample_names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+```
+
+
+Permet de visualiser les profils de qualité des forward read et reverse read
+```{r}
+plotQualityProfile(fnFs[1:10])
+plotQualityProfile(fnRs[1:10])
+```
+
+
+Permet d'attribuer les noms de fichiers fastq.gz filtrés.
+```{r}
+filtFs <- file.path(path, "filtered", paste0(sample_names, "_1.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample_names, "_2.fastq.gz"))
+names(filtFs) <- sample_names
+names(filtRs) <- sample_names
+```
+
+Nous utiliserons les paramètres de filtrage standard : maxN=0(DADA2 ne nécessite aucun N), truncQ=2, rm.phix=TRUEet maxEE=2. Le maxEEparamètre définit le nombre maximum d'« erreurs attendues » autorisées dans une lecture, ce qui constitue un meilleur filtre que la simple moyenne des scores de qualité.
+
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+head(out)
+```
+
+Taux d'erreur : 
+L'algorithme DADA2 utilise un modèle d'erreur paramétrique ( err) et chaque ensemble de données d'amplicon a un ensemble différent de taux d'erreur. La learnErrorsméthode apprend ce modèle d'erreur à partir des données, en alternant l'estimation des taux d'erreur et l'inférence de la composition de l'échantillon jusqu'à ce qu'ils convergent vers une solution conjointement cohérente. Comme dans de nombreux problèmes d'apprentissage automatique, l'algorithme doit commencer par une estimation initiale, pour laquelle les taux d'erreur maximaux possibles dans ces données sont utilisés (les taux d'erreur si seule la séquence la plus abondante est correcte et que tous les autres sont des erreurs).
+
+Erreur Forward : 
+```{r}
+errF <- learnErrors(filtFs, multithread=TRUE)
+```
+Erreur Reverse :
+```{r}
+errR <- learnErrors(filtRs, multithread=TRUE)
+```
+
+Il est toujours intéressant, à titre de contrôle de cohérence, de visualiser les taux d'erreur estimés :
+```{r}
+plotErrors(errF, nominalQ=TRUE)
+```
+
+
+```{r}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+```
+
+```{r}
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+```
+
+```{r}
+dadaFs[[1]]
+```
+```{r}
+mergers <- dada2::mergePairs(
+  dadaF = dadaFs,
+  derepF = filtFs,
+  dadaR = dadaRs,
+  derepR = filtRs,
+  maxMismatch = 0,
+  verbose = TRUE
+)
+```
+
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+```
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+```
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+```{r}
+seqtab
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+```
+```{r}
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample_names
+head(track)
+```
+```{r}
+
+
+# we save in variable the path to the refdb
+# in the working space
+silva_train_set <- file.path(path,
+                             "silva_nr99_v138.1_train_set.fa.gz")
+
+silva_species_assignment <- file.path(path,
+                                      "silva_species_assignment_v138.1.fa.gz")
+
+# then we download the files if they don't already exist
+
+if (!file.exists(silva_train_set)) {
+  download.file(
+    "https://zenodo.org/record/4587955/files/silva_nr99_v138.1_train_set.fa.gz",
+    silva_train_set,
+    quiet = TRUE
+  )
+}
+
+if (!file.exists(silva_species_assignment)) {
+  download.file(
+    "https://zenodo.org/record/4587955/files/silva_species_assignment_v138.1.fa.gz",
+    silva_species_assignment,
+    quiet = TRUE
+  )
+}
+```
+
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+taxa
+```
+
+
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+```{r}
+unqs.mock <- seqtab.nochim["Sequence1"]
+unqs.mock <- sort(unqs.mock[unqs.mock>0], decreasing=TRUE) # Drop ASVs absent in the Sequence1
+cat("DADA2 inferred", length(unqs.mock), "sample sequences present in the Sequence1 community.\n")
+```
+
+```
+mock.ref <- getSequences(file.path(path, "HMP_MOCK.v35.fasta"))
+match.ref <- sum(sapply(names(unqs.mock), function(x) any(grepl(x, mock.ref))))
+cat("Of those,", sum(match.ref), "were exact matches to the expected reference sequences.\n")
+```
+Erreur dans le type d'argument. 
+
+Ici, nous avons pris que 20 séquences pour montrer l'exemple des démarches à suivre, mais il faudrait beaucoup plus de temps (temps de chargement) pour une étude complète (avec des milliers de séquences). 
+FIN DE DADA2. 
+
