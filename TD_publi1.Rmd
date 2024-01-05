@@ -181,6 +181,8 @@ cat("Of those,", sum(match.ref), "were exact matches to the expected reference s
 ```
 Erreur dans le type d'argument. 
 
-Ici, nous avons pris que 20 séquences pour montrer l'exemple des démarches à suivre, mais il faudrait beaucoup plus de temps (temps de chargement) pour une étude complète (avec des milliers de séquences). 
+Ici, nous avons pris que 20 séquences pour montrer l'exemple des démarches à suivre, mais il faudrait beaucoup plus de temps (temps de chargement) pour une étude complète (avec des milliers de séquences)...
 FIN DE DADA2. 
+
+
 
